@@ -1,0 +1,35 @@
+# Time Series Library - Requirements
+# Install: pip install -r requirements.txt
+# PyTorch (CUDA 12.1) — CPU için cu121'i cpu ile değiştir
+--index-url https://download.pytorch.org/whl/cu121
+torch
+torchvision
+torchaudio
+
+# Core
+--index-url https://pypi.org/simple
+numpy
+pandas
+scikit-learn
+scipy
+
+# Time series
+einops
+reformer-pytorch
+
+# Config & tracking
+pyyaml
+omegaconf
+tensorboard
+
+# Utilities
+matplotlib
+seaborn
+tqdm
+loguru
+
+# Dev (opsiyonel, sadece geliştirme için)
+jupyter
+ipykernel
+pytest
+ruff
