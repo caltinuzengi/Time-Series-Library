@@ -208,3 +208,10 @@ __marimo__/
 
 
 /plans
+
+# Project data & outputs (see AGENT_PLAN.md)
+/data/
+/datasets/
+/checkpoints/
+/results/
+/logs/

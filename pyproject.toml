@@ -1,7 +1,7 @@
 [project]
 name = "time-series-library"
 version = "0.1.0"
-description = "Add your description here"
+description = "TimesNet and TimeMixer implementations for forecasting and anomaly detection"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -30,6 +30,24 @@ dev = [
     "pytest",
     "ruff"
 ]
+
+[tool.uv]
+package = true
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["utils*", "data_provider*", "exp*", "layers*", "models*", "scripts*"]
+
+[project.scripts]
+download-data   = "scripts.download_data:main"
+check-env       = "scripts.checks.check_env:main"
+check-data      = "scripts.checks.check_data:main"
+check-layers    = "scripts.checks.check_layers:main"
+check-timesnet  = "scripts.checks.check_timesnet:main"
+check-timemixer = "scripts.checks.check_timemixer:main"
 
 # Torch's index
 [[tool.uv.index]]
