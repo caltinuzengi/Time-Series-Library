@@ -77,7 +77,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--batch_size",     type=int,   default=32,   help="Batch size")
     p.add_argument("--learning_rate",  type=float, default=1e-4, help="Initial learning rate")
     p.add_argument("--patience",       type=int,   default=3,    help="Early stopping patience")
-    p.add_argument("--num_workers",    type=int,   default=4,    help="DataLoader workers")
+    p.add_argument("--num_workers",    type=int,   default=2,    help="DataLoader workers (0=main process, Colab/WSL: ≤2)")
 
     # --- hardware ---
     p.add_argument("--use_gpu", action="store_true", default=False,

@@ -87,7 +87,7 @@ class ExpForecasting(ExpBase):
         optimizer = self._get_optimizer()
         criterion = self._get_criterion()
         scheduler = ReduceLROnPlateau(
-            optimizer, mode="min", patience=2, factor=0.5, verbose=False
+            optimizer, mode="min", patience=2, factor=0.5
         )
         stopper = EarlyStopping(patience=self.args.patience)
 
