@@ -72,6 +72,14 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--small_kernel", type=int, default=5,  help="DWConv small kernel (ModernTCN)")
     p.add_argument("--ffn_ratio",    type=int, default=4,  help="ConvFFN expansion ratio (ModernTCN)")
 
+    # --- TimeMixer-specific (Faz 4) ---
+    p.add_argument("--down_sampling_layers", type=int, default=3,
+                   help="Number of downsampling steps (TimeMixer)")
+    p.add_argument("--down_sampling_window", type=int, default=2,
+                   help="Downsampling factor between consecutive scales (TimeMixer)")
+    p.add_argument("--moving_avg",           type=int, default=25,
+                   help="Moving-average kernel size for series decomposition (TimeMixer)")
+
     # --- training ---
     p.add_argument("--train_epochs",   type=int,   default=10,   help="Max training epochs")
     p.add_argument("--batch_size",     type=int,   default=32,   help="Batch size")
