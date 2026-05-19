@@ -6,7 +6,6 @@ inserting one line into the registry — no other code needs to change.
 
 from __future__ import annotations
 
-import os
 import time
 from pathlib import Path
 
@@ -15,12 +14,13 @@ import torch
 import torch.nn as nn
 from loguru import logger
 from torch.optim.lr_scheduler import ReduceLROnPlateau
+from tqdm.auto import tqdm
 
 from data_provider.data_factory import get_dataloader
 from exp.exp_base import ExpBase
 from models.TimesNet import TimesNet
 from utils.metrics import evaluate_forecast
-from utils.tools import EarlyStopping, load_checkpoint, save_checkpoint
+from utils.tools import EarlyStopping, load_checkpoint
 
 # ---------------------------------------------------------------------------
 # Model registry — add one line per new model (PatchTST, ModernTCN, …)
@@ -32,6 +32,23 @@ MODEL_REGISTRY: dict[str, type[nn.Module]] = {
     # "ModernTCN": ModernTCN,  # Faz 6
 }
 
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _cuda_mem_str(device: torch.device) -> str:
+    """Return a compact CUDA memory usage string, or '' on CPU."""
+    if device.type != "cuda":
+        return ""
+    alloc = torch.cuda.memory_allocated(device) / 1e9
+    reserved = torch.cuda.memory_reserved(device) / 1e9
+    return f" | CUDA mem {alloc:.2f}/{reserved:.2f} GB"
+
+
+# ---------------------------------------------------------------------------
+# ExpForecasting
+# ---------------------------------------------------------------------------
 
 class ExpForecasting(ExpBase):
     """Supervised forecasting experiment.
@@ -53,10 +70,31 @@ class ExpForecasting(ExpBase):
                 f"Unknown model {self.args.model!r}. "
                 f"Available: {list(MODEL_REGISTRY)}"
             )
-        return model_cls(self.args)
+        model = model_cls(self.args)
+        n_params = sum(p.numel() for p in model.parameters())
+        logger.info(f"Model built: {self.args.model} | params={n_params:,}")
+        return model
 
     def _get_data(self, split: str):
         return get_dataloader(self.args, split)
+
+    # ------------------------------------------------------------------
+    def _log_device_info(self) -> None:
+        if self.device.type == "cuda":
+            idx = self.device.index or 0
+            props = torch.cuda.get_device_properties(idx)
+            total_gb = props.total_memory / 1e9
+            logger.info(f"GPU : {props.name} | {total_gb:.1f} GB total")
+        else:
+            logger.info("Device: CPU")
+
+    def _log_loader_info(self, loader, split: str) -> None:
+        n_samples = len(loader.dataset)
+        n_batches = len(loader)
+        logger.info(
+            f"{split.capitalize():5s} split: {n_samples:,} samples | "
+            f"{n_batches} batches (batch_size={self.args.batch_size})"
+        )
 
     # ------------------------------------------------------------------
     def _validate(self, val_loader) -> float:
@@ -66,12 +104,12 @@ class ExpForecasting(ExpBase):
         losses: list[float] = []
 
         with torch.no_grad():
-            for batch_x, batch_y, batch_x_mark, batch_y_mark in val_loader:
-                batch_x = batch_x.float().to(self.device)
-                batch_y = batch_y.float().to(self.device)
+            for batch_x, batch_y, batch_x_mark, _ in val_loader:
+                batch_x      = batch_x.float().to(self.device)
+                batch_y      = batch_y.float().to(self.device)
                 batch_x_mark = batch_x_mark.float().to(self.device)
 
-                pred = self.model(batch_x, batch_x_mark)          # (B, pred_len, C)
+                pred = self.model(batch_x, batch_x_mark)
                 true = batch_y[:, -self.args.pred_len:, :].to(self.device)
                 losses.append(criterion(pred, true).item())
 
@@ -81,34 +119,53 @@ class ExpForecasting(ExpBase):
     # ------------------------------------------------------------------
     def train(self) -> None:
         """Full training loop with early stopping and LR scheduling."""
-        train_loader = self._get_data("train")
-        val_loader = self._get_data("val")
 
+        # ---- Data -------------------------------------------------------
+        t_data = time.time()
+        logger.info("Loading datasets …")
+        train_loader = self._get_data("train")
+        val_loader   = self._get_data("val")
+        logger.info(f"Datasets loaded in {time.time() - t_data:.1f}s")
+
+        self._log_device_info()
+        self._log_loader_info(train_loader, "train")
+        self._log_loader_info(val_loader,   "val")
+
+        # ---- Optimizer / scheduler / stopper ----------------------------
         optimizer = self._get_optimizer()
         criterion = self._get_criterion()
-        scheduler = ReduceLROnPlateau(
-            optimizer, mode="min", patience=2, factor=0.5
-        )
-        stopper = EarlyStopping(patience=self.args.patience)
+        scheduler = ReduceLROnPlateau(optimizer, mode="min", patience=2, factor=0.5)
+        stopper   = EarlyStopping(patience=self.args.patience)
 
         logger.info(
             f"Training {self.args.model} on {self.args.data} | "
-            f"pred_len={self.args.pred_len} | device={self.device}"
+            f"pred_len={self.args.pred_len} | epochs={self.args.train_epochs} | "
+            f"lr={self.args.learning_rate:.2e} | device={self.device}"
         )
+        logger.info("-" * 60)
 
+        # ---- Epoch loop -------------------------------------------------
         for epoch in range(1, self.args.train_epochs + 1):
             self.model.train()
-            t0 = time.time()
+            t_epoch = time.time()
             train_losses: list[float] = []
 
-            for batch_x, batch_y, batch_x_mark, batch_y_mark in train_loader:
+            # tqdm progress bar over batches — leave=False keeps terminal clean
+            pbar = tqdm(
+                train_loader,
+                desc=f"Epoch {epoch:03d}/{self.args.train_epochs} [train]",
+                leave=False,
+                unit="batch",
+                dynamic_ncols=True,
+            )
+            for batch_x, batch_y, batch_x_mark, _ in pbar:
                 optimizer.zero_grad()
 
-                batch_x = batch_x.float().to(self.device)
-                batch_y = batch_y.float().to(self.device)
+                batch_x      = batch_x.float().to(self.device)
+                batch_y      = batch_y.float().to(self.device)
                 batch_x_mark = batch_x_mark.float().to(self.device)
 
-                pred = self.model(batch_x, batch_x_mark)           # (B, pred_len, C)
+                pred = self.model(batch_x, batch_x_mark)
                 true = batch_y[:, -self.args.pred_len:, :].to(self.device)
 
                 loss = criterion(pred, true)
@@ -117,27 +174,34 @@ class ExpForecasting(ExpBase):
                 optimizer.step()
                 train_losses.append(loss.item())
 
+                # Update tqdm postfix with running loss
+                pbar.set_postfix(loss=f"{loss.item():.4f}")
+
+            pbar.close()
+
+            # ---- Validation ---------------------------------------------
             train_loss = float(np.mean(train_losses))
-            val_loss = self._validate(val_loader)
-            elapsed = time.time() - t0
-            lr = optimizer.param_groups[0]["lr"]
+            val_loss   = self._validate(val_loader)
+            elapsed    = time.time() - t_epoch
+            lr         = optimizer.param_groups[0]["lr"]
 
             logger.info(
                 f"Epoch {epoch:03d}/{self.args.train_epochs} | "
                 f"train={train_loss:.4f} | val={val_loss:.4f} | "
                 f"lr={lr:.2e} | {elapsed:.1f}s"
+                + _cuda_mem_str(self.device)
             )
 
             scheduler.step(val_loss)
             stopper(val_loss, self.model, str(self.checkpoint_path))
 
             if stopper.early_stop:
-                logger.info("Early stopping triggered.")
+                logger.info(f"Early stopping at epoch {epoch} (patience={self.args.patience}).")
                 break
 
-        # Restore best weights
+        logger.info("-" * 60)
         load_checkpoint(self.model, str(self.checkpoint_path))
-        logger.info(f"Best model loaded from {self.checkpoint_path}")
+        logger.info(f"Best model restored from {self.checkpoint_path}")
 
     # ------------------------------------------------------------------
     def test(self) -> dict:
@@ -146,20 +210,25 @@ class ExpForecasting(ExpBase):
         Returns:
             Dict with keys ``mse``, ``mae``, ``rmse``, ``mape``.
         """
+        logger.info("Starting test evaluation …")
         load_checkpoint(self.model, str(self.checkpoint_path))
         test_loader = self._get_data("test")
+        self._log_loader_info(test_loader, "test")
 
         self.model.eval()
         preds: list[np.ndarray] = []
         trues: list[np.ndarray] = []
 
+        t_test = time.time()
         with torch.no_grad():
-            for batch_x, batch_y, batch_x_mark, _ in test_loader:
-                batch_x = batch_x.float().to(self.device)
+            for batch_x, batch_y, batch_x_mark, _ in tqdm(
+                test_loader, desc="Testing", leave=False, unit="batch"
+            ):
+                batch_x      = batch_x.float().to(self.device)
                 batch_x_mark = batch_x_mark.float().to(self.device)
 
-                pred = self.model(batch_x, batch_x_mark)           # (B, pred_len, C)
-                true = batch_y[:, -self.args.pred_len:, :]         # (B, pred_len, C)
+                pred = self.model(batch_x, batch_x_mark)
+                true = batch_y[:, -self.args.pred_len:, :]
 
                 preds.append(pred.cpu().numpy())
                 trues.append(true.numpy())
@@ -169,6 +238,8 @@ class ExpForecasting(ExpBase):
 
         metrics = evaluate_forecast(preds_np, trues_np)
         logger.info(
-            f"Test results — MSE: {metrics['mse']:.4f} | MAE: {metrics['mae']:.4f}"
+            f"Test done in {time.time() - t_test:.1f}s | "
+            f"MSE={metrics['mse']:.4f} | MAE={metrics['mae']:.4f} | "
+            f"RMSE={metrics['rmse']:.4f} | MAPE={metrics['mape']:.4f}"
         )
         return metrics
