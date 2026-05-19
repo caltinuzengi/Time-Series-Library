@@ -41,7 +41,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--data",   default="ETTh1",    help="Dataset name")
     p.add_argument("--task",   default="forecasting",
                    choices=["forecasting", "anomaly_detection"])
-    p.add_argument("--data_path", default="./data", help="Root directory for CSV files")
+    p.add_argument("--root_path", default="./data", help="Root directory for CSV files")
 
     # --- sequence lengths ---
     p.add_argument("--seq_len",   type=int, default=96,  help="Encoder input length")
