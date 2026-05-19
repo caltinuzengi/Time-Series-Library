@@ -80,11 +80,12 @@ def get_dataloader(args, split: str) -> DataLoader:
             "Expected 'forecasting' or 'anomaly_detection'."
         )
 
+    pin = torch.cuda.is_available()
     return DataLoader(
         dataset,
         batch_size=args.batch_size,
         shuffle=shuffle,
         num_workers=num_workers,
         drop_last=False,
-        pin_memory=True,
+        pin_memory=pin,
     )

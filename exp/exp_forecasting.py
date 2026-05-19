@@ -59,8 +59,10 @@ class ExpForecasting(ExpBase):
 
     def __init__(self, args) -> None:
         super().__init__(args)
-        self.checkpoint_path = Path(args.checkpoint_path) / "best_model.pth"
-        self.checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+        # checkpoint_dir = the directory; checkpoint_path = the .pth file inside it
+        self.checkpoint_dir  = Path(args.checkpoint_path)
+        self.checkpoint_file = self.checkpoint_dir / "best_model.pth"
+        self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
     # ------------------------------------------------------------------
     def _build_model(self) -> nn.Module:
@@ -103,7 +105,7 @@ class ExpForecasting(ExpBase):
         criterion = self._get_criterion()
         losses: list[float] = []
 
-        with torch.no_grad():
+        with torch.inference_mode():
             for batch_x, batch_y, batch_x_mark, _ in val_loader:
                 batch_x      = batch_x.float().to(self.device)
                 batch_y      = batch_y.float().to(self.device)
@@ -149,8 +151,9 @@ class ExpForecasting(ExpBase):
             self.model.train()
             t_epoch = time.time()
             train_losses: list[float] = []
+            t_data_total = 0.0
+            t_fwd_total  = 0.0
 
-            # tqdm progress bar over batches — leave=False keeps terminal clean
             pbar = tqdm(
                 train_loader,
                 desc=f"Epoch {epoch:03d}/{self.args.train_epochs} [train]",
@@ -158,9 +161,13 @@ class ExpForecasting(ExpBase):
                 unit="batch",
                 dynamic_ncols=True,
             )
+            t_batch_start = time.time()
             for batch_x, batch_y, batch_x_mark, _ in pbar:
+                t_data_total += time.time() - t_batch_start
+
                 optimizer.zero_grad()
 
+                t_fwd_start = time.time()
                 batch_x      = batch_x.float().to(self.device)
                 batch_y      = batch_y.float().to(self.device)
                 batch_x_mark = batch_x_mark.float().to(self.device)
@@ -173,35 +180,39 @@ class ExpForecasting(ExpBase):
                 nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
                 optimizer.step()
                 train_losses.append(loss.item())
+                t_fwd_total += time.time() - t_fwd_start
 
-                # Update tqdm postfix with running loss
                 pbar.set_postfix(loss=f"{loss.item():.4f}")
+                t_batch_start = time.time()
 
             pbar.close()
 
-            # ---- Validation ---------------------------------------------
+            # Validation
+            t_val = time.time()
             train_loss = float(np.mean(train_losses))
             val_loss   = self._validate(val_loader)
-            elapsed    = time.time() - t_epoch
-            lr         = optimizer.param_groups[0]["lr"]
+            t_val_elapsed = time.time() - t_val
+            elapsed = time.time() - t_epoch
+            lr = optimizer.param_groups[0]["lr"]
 
             logger.info(
                 f"Epoch {epoch:03d}/{self.args.train_epochs} | "
                 f"train={train_loss:.4f} | val={val_loss:.4f} | "
-                f"lr={lr:.2e} | {elapsed:.1f}s"
+                f"lr={lr:.2e} | {elapsed:.1f}s "
+                f"[data={t_data_total:.1f}s fwd/bwd={t_fwd_total:.1f}s val={t_val_elapsed:.1f}s]"
                 + _cuda_mem_str(self.device)
             )
 
             scheduler.step(val_loss)
-            stopper(val_loss, self.model, str(self.checkpoint_path))
+            stopper(val_loss, self.model, str(self.checkpoint_dir))  # dir, not .pth file
 
             if stopper.early_stop:
                 logger.info(f"Early stopping at epoch {epoch} (patience={self.args.patience}).")
                 break
 
         logger.info("-" * 60)
-        load_checkpoint(self.model, str(self.checkpoint_path))
-        logger.info(f"Best model restored from {self.checkpoint_path}")
+        load_checkpoint(self.model, str(self.checkpoint_dir))  # dir → appends best_model.pth inside
+        logger.info(f"Best model restored from {self.checkpoint_file}")
 
     # ------------------------------------------------------------------
     def test(self) -> dict:
@@ -211,7 +222,7 @@ class ExpForecasting(ExpBase):
             Dict with keys ``mse``, ``mae``, ``rmse``, ``mape``.
         """
         logger.info("Starting test evaluation …")
-        load_checkpoint(self.model, str(self.checkpoint_path))
+        load_checkpoint(self.model, str(self.checkpoint_dir))
         test_loader = self._get_data("test")
         self._log_loader_info(test_loader, "test")
 
@@ -220,7 +231,7 @@ class ExpForecasting(ExpBase):
         trues: list[np.ndarray] = []
 
         t_test = time.time()
-        with torch.no_grad():
+        with torch.inference_mode():
             for batch_x, batch_y, batch_x_mark, _ in tqdm(
                 test_loader, desc="Testing", leave=False, unit="batch"
             ):

@@ -132,18 +132,13 @@ class TimesBlock(nn.Module):
         self.d_model = d_model
         self.top_k = top_k
 
-        # One shared InceptionBlock for all k periods (parameter-efficient).
-        # After 1D→2D reshape the tensor is (B*N, 1, rows, period) — 1 input channel.
-        self.inception = InceptionBlock(
-            in_channels=1,
-            out_channels=d_ff,
-            num_kernels=num_kernels,
-        )
-        # Project back to d_model if d_ff != d_model
-        self.proj = (
-            nn.Linear(d_ff, d_model, bias=False)
-            if d_ff != d_model
-            else nn.Identity()
+        # Two-stage InceptionBlock: d_model → d_ff (GELU) → d_model
+        # Matches TSLib reference implementation.
+        # Reshape keeps batch=B, not B*d_model, for GPU efficiency.
+        self.conv = nn.Sequential(
+            InceptionBlock(in_channels=d_model, out_channels=d_ff, num_kernels=num_kernels),
+            nn.GELU(),
+            InceptionBlock(in_channels=d_ff, out_channels=d_model, num_kernels=num_kernels),
         )
 
     # ------------------------------------------------------------------
@@ -189,22 +184,20 @@ class TimesBlock(nn.Module):
         residuals: list[torch.Tensor] = []
 
         for period in periods:
-            # --- pad time dim to nearest multiple of period ---
+            # Pad time dim to nearest multiple of period
             pad_len = math.ceil(T / period) * period - T
             x_pad = F.pad(x, (0, 0, 0, pad_len)) if pad_len > 0 else x
             rows = x_pad.shape[1] // period
 
-            # 1-D → 2-D: (B, rows*period, N) → (B*N, 1, rows, period)
-            x_2d = rearrange(x_pad, "b (r p) n -> (b n) 1 r p", p=period)
+            # 1-D → 2-D: (B, rows*period, N) → (B, N, rows, period)
+            # Keeps batch=B (not B*N) — correct cross-channel mixing, 64x less batch overhead
+            x_2d = rearrange(x_pad, "b (r p) n -> b n r p", p=period)
 
-            # Shared inception: (B*N, 1, rows, period) → (B*N, d_ff, rows, period)
-            out_2d = self.inception(x_2d)
+            # Two-stage conv: (B, N, rows, period) → (B, N, rows, period)
+            out_2d = self.conv(x_2d)
 
-            # 2-D → 1-D: average d_ff channels, then rearrange back
-            out_2d = out_2d.mean(dim=1)                              # (B*N, rows, period)
-            out_1d = rearrange(out_2d, "(b n) r p -> b (r p) n", b=B, n=N)
-
-            # Truncate to original T
+            # 2-D → 1-D: (B, N, rows, period) → (B, rows*period, N) → truncate
+            out_1d = rearrange(out_2d, "b n r p -> b (r p) n")
             residuals.append(out_1d[:, :T, :])
 
         # Softmax-weighted aggregation + residual
