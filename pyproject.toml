@@ -48,6 +48,7 @@ check-data      = "scripts.checks.check_data:main"
 check-layers    = "scripts.checks.check_layers:main"
 check-timesnet  = "scripts.checks.check_timesnet:main"
 check-timemixer = "scripts.checks.check_timemixer:main"
+check-patchtst  = "scripts.checks.check_patchTST:main"
 
 # Torch's index
 [[tool.uv.index]]

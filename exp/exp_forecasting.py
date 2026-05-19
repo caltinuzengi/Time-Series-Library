@@ -18,6 +18,7 @@ from tqdm.auto import tqdm
 
 from data_provider.data_factory import get_dataloader
 from exp.exp_base import ExpBase
+from models.PatchTST import PatchTST
 from models.TimeMixer import TimeMixer
 from models.TimesNet import TimesNet
 from utils.metrics import evaluate_forecast
@@ -29,7 +30,7 @@ from utils.tools import EarlyStopping, load_checkpoint
 MODEL_REGISTRY: dict[str, type[nn.Module]] = {
     "TimesNet": TimesNet,
     "TimeMixer": TimeMixer,
-    # "PatchTST":  PatchTST,   # Faz 5
+    "PatchTST":  PatchTST,
     # "ModernTCN": ModernTCN,  # Faz 6
 }
 

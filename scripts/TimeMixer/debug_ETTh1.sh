@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# TimeMixer — ETTh1 forecasting  (pred_len=96)
-# Target MSE: ~0.360  (Wang et al. ICLR 2024, Table 1)
-# Reference config: train_epochs=20, patience=5 — LR must decay for best results
+# TimeMixer — ETTh1 quick 1-epoch debug run
+# Use this to verify the pipeline before launching a full training run.
 set -euo pipefail
 
 uv run python -u run.py \
@@ -20,10 +19,10 @@ uv run python -u run.py \
   --down_sampling_window 2 \
   --moving_avg     25 \
   --dropout        0.1 \
-  --train_epochs   20 \
+  --train_epochs   1 \
   --batch_size     16 \
   --learning_rate  0.01 \
-  --patience       5 \
+  --patience       3 \
   --num_workers    2 \
   --use_gpu \
   --seed           42
