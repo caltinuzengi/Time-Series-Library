@@ -42,7 +42,7 @@ class InceptionBlock(nn.Module):
         output: ``(B, C, H, W)``  (same spatial size via padding)
     """
 
-    # Kernel sizes as defined in the paper (Eq. 5)
+    # Kernel sizes as defined in the paper (Eq. 5): square 2D kernels
     _KERNEL_SIZES = [1, 3, 5, 7, 9, 11]
 
     def __init__(
@@ -59,8 +59,8 @@ class InceptionBlock(nn.Module):
                 nn.Conv2d(
                     in_channels,
                     out_channels,
-                    kernel_size=(1, k),
-                    padding=(0, k // 2),  # same padding along W
+                    kernel_size=k,       # square kernel: captures both intra- and interperiod
+                    padding=k // 2,      # same padding
                 )
                 for k in kernels
             ]
@@ -146,18 +146,22 @@ class TimesBlock(nn.Module):
     def _top_k_periods(x: torch.Tensor, top_k: int) -> tuple[torch.Tensor, list[int]]:
         """Compute top-k dominant periods via real FFT.
 
+        Period selection is global (same k frequencies for all instances in
+        the batch), but the aggregation weights are per-instance so each
+        sample can weight the periods differently.
+
         Returns:
-            weights: Softmax weights for each period, shape ``(top_k,)``.
-            periods: List of integer period values.
+            weights: Per-instance un-normalised amplitudes, shape ``(B, k)``.
+            periods: List of integer period values, length k.
         """
-        T = x.shape[1]
+        B, T, N = x.shape
         # rfft over time → (B, T//2+1, N) complex
         xf = torch.fft.rfft(x, dim=1)
-        # Mean amplitude over batch and variates → (T//2+1,)
+        # Global amplitude: mean over batch AND variates → (T//2+1,)
         amp = xf.abs().mean(dim=(0, 2))
         amp[0] = 0.0  # zero DC component
 
-        # Select top-k frequencies (indices ≥ 1)
+        # Select top-k frequencies (indices ≥ 1), same for all instances
         k = min(top_k, amp.shape[0] - 1)
         _, top_idx = torch.topk(amp[1:], k)
         top_idx = top_idx + 1  # shift back (index 0 == DC)
@@ -165,7 +169,9 @@ class TimesBlock(nn.Module):
         # Convert frequency index → period length; clamp to ≥ 1
         periods = [max(1, T // idx.item()) for idx in top_idx]
 
-        weights = F.softmax(amp[top_idx], dim=0)  # (k,)
+        # Per-instance weights: amplitude at top freqs, averaged over variates
+        per_inst = xf.abs().mean(dim=-1)   # (B, T//2+1)
+        weights = per_inst[:, top_idx]      # (B, k)
         return weights, periods
 
     # ------------------------------------------------------------------
@@ -180,6 +186,7 @@ class TimesBlock(nn.Module):
         B, T, N = x.shape
 
         weights, periods = self._top_k_periods(x, self.top_k)
+        k = len(periods)
 
         residuals: list[torch.Tensor] = []
 
@@ -190,7 +197,6 @@ class TimesBlock(nn.Module):
             rows = x_pad.shape[1] // period
 
             # 1-D → 2-D: (B, rows*period, N) → (B, N, rows, period)
-            # Keeps batch=B (not B*N) — correct cross-channel mixing, 64x less batch overhead
             x_2d = rearrange(x_pad, "b (r p) n -> b n r p", p=period)
 
             # Two-stage conv: (B, N, rows, period) → (B, N, rows, period)
@@ -200,6 +206,10 @@ class TimesBlock(nn.Module):
             out_1d = rearrange(out_2d, "b n r p -> b (r p) n")
             residuals.append(out_1d[:, :T, :])
 
-        # Softmax-weighted aggregation + residual
-        out = sum(w * r for w, r in zip(weights, residuals))   # (B, T, N)
+        # Per-instance softmax-weighted aggregation + residual connection
+        res = torch.stack(residuals, dim=-1)                          # (B, T, N, k)
+        period_weight = F.softmax(weights, dim=1)                     # (B, k) — normalise over k
+        period_weight = period_weight.unsqueeze(1).unsqueeze(1)       # (B, 1, 1, k)
+        period_weight = period_weight.expand(-1, T, N, -1)            # (B, T, N, k)
+        out = torch.sum(res * period_weight, dim=-1)                  # (B, T, N)
         return out + x

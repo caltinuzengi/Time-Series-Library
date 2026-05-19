@@ -64,6 +64,12 @@ class TimesNet(nn.Module):
             dropout=configs.dropout,
         )
 
+        # --- Learned temporal expansion: seq_len → seq_len + pred_len ---
+        # Applied per-channel along the time axis (matches TSLib reference).
+        self.predict_linear = nn.Linear(
+            configs.seq_len, configs.pred_len + configs.seq_len
+        )
+
         # --- TimesBlocks + LayerNorms ---
         self.blocks = nn.ModuleList(
             [
@@ -109,10 +115,9 @@ class TimesNet(nn.Module):
         # 2. Embed
         enc = self.embedding(x, x_mark_enc)                   # (B, L, d_model)
 
-        # 3. Zero-pad right by pred_len
-        B, L, D = enc.shape
-        pad = enc.new_zeros(B, self.pred_len, D)
-        enc = torch.cat([enc, pad], dim=1)                    # (B, L+H, d_model)
+        # 3. Learned temporal expansion: seq_len → seq_len + pred_len
+        #    permute time↔channel so Linear acts on the time axis
+        enc = self.predict_linear(enc.permute(0, 2, 1)).permute(0, 2, 1)  # (B, L+H, d_model)
 
         # 4. TimesBlocks
         for block, norm in zip(self.blocks, self.norms):
