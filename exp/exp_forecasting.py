@@ -81,8 +81,8 @@ class ExpForecasting(ExpBase):
     # ------------------------------------------------------------------
     def train(self) -> None:
         """Full training loop with early stopping and LR scheduling."""
-        _, train_loader = self._get_data("train")
-        _, val_loader = self._get_data("val")
+        train_loader = self._get_data("train")
+        val_loader = self._get_data("val")
 
         optimizer = self._get_optimizer()
         criterion = self._get_criterion()
@@ -147,7 +147,7 @@ class ExpForecasting(ExpBase):
             Dict with keys ``mse``, ``mae``, ``rmse``, ``mape``.
         """
         load_checkpoint(self.model, str(self.checkpoint_path))
-        _, test_loader = self._get_data("test")
+        test_loader = self._get_data("test")
 
         self.model.eval()
         preds: list[np.ndarray] = []
