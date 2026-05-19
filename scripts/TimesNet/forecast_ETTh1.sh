@@ -3,7 +3,7 @@
 # Reference: MSE ~ 0.384 (TSLib ICLR 2023)
 set -euo pipefail
 
-python run.py \
+uv run python run.py \
   --model TimesNet \
   --data ETTh1 \
   --task forecasting \
