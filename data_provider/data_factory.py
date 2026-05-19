@@ -4,6 +4,7 @@ Data factory: maps dataset names and tasks to DataLoader instances.
 
 from __future__ import annotations
 
+import torch
 from torch.utils.data import DataLoader
 
 from data_provider.data_loader import AnomalyDataset, ETTDataset
