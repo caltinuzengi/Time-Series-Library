@@ -18,6 +18,7 @@ from tqdm.auto import tqdm
 
 from data_provider.data_factory import get_dataloader
 from exp.exp_base import ExpBase
+from models.ModernTCN import ModernTCN
 from models.PatchTST import PatchTST
 from models.TimeMixer import TimeMixer
 from models.TimesNet import TimesNet
@@ -31,7 +32,7 @@ MODEL_REGISTRY: dict[str, type[nn.Module]] = {
     "TimesNet": TimesNet,
     "TimeMixer": TimeMixer,
     "PatchTST":  PatchTST,
-    # "ModernTCN": ModernTCN,  # Faz 6
+    "ModernTCN": ModernTCN,
 }
 
 
@@ -204,6 +205,14 @@ class ExpForecasting(ExpBase):
                 f"[data={t_data_total:.1f}s fwd/bwd={t_fwd_total:.1f}s val={t_val_elapsed:.1f}s]"
                 + _cuda_mem_str(self.device)
             )
+
+            self.epoch_logs.append({
+                "epoch":      epoch,
+                "train_loss": round(train_loss, 6),
+                "val_loss":   round(val_loss,   6),
+                "lr":         lr,
+                "elapsed_s":  round(elapsed, 2),
+            })
 
             scheduler.step(val_loss)
             stopper(val_loss, self.model, str(self.checkpoint_dir))  # dir, not .pth file

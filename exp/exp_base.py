@@ -22,6 +22,8 @@ class ExpBase(abc.ABC):
         self.args = args
         self.device: torch.device = args.device
         self.model: nn.Module = self._build_model().to(self.device)
+        # Populated by train() — one dict per epoch.  Read by run.py after training.
+        self.epoch_logs: list[dict] = []
 
     # ------------------------------------------------------------------
     @abc.abstractmethod

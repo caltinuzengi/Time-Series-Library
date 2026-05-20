@@ -180,11 +180,13 @@ class AnomalyDataset(Dataset):
         split: str,
         win_size: int,
         scale: bool = True,
+        step: int = 1,
     ) -> None:
         assert split in ("train", "test"), f"Unknown split: {split!r}"
         self.split = split
         self.win_size = win_size
         self.scale = scale
+        self.step = max(1, step)
 
         base = Path(root_path) / data_path
 
@@ -224,7 +226,8 @@ class AnomalyDataset(Dataset):
 
     def __len__(self) -> int:
         data = self.train if self.split == "train" else self.test
-        return max(0, len(data) - self.win_size + 1)
+        n = max(0, len(data) - self.win_size + 1)
+        return (n + self.step - 1) // self.step  # ceil division
 
     def __getitem__(self, idx: int):
         """Return a single sliding window.
@@ -232,10 +235,11 @@ class AnomalyDataset(Dataset):
         train split → ``(window,)``  shape ``(win_size, C)`` float32
         test  split → ``(window, label)`` shapes ``(win_size, C)`` and ``(win_size,)``
         """
+        start = idx * self.step
         if self.split == "train":
-            x = self.train[idx : idx + self.win_size]
+            x = self.train[start : start + self.win_size]
             return x
         else:
-            x = self.test[idx : idx + self.win_size]
-            y = self.labels[idx : idx + self.win_size]
+            x = self.test[start : start + self.win_size]
+            y = self.labels[start : start + self.win_size]
             return x, y

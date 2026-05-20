@@ -221,3 +221,61 @@ class TimeMixer(nn.Module):
         dec_out = self.normalize_layers[0](dec_out, "denorm")
 
         return dec_out
+
+    # ------------------------------------------------------------------
+
+    def anomaly_detection(self, x_enc: torch.Tensor) -> torch.Tensor:
+        """Reconstruct the input for anomaly detection.
+
+        Uses the finest-scale PDM embedding directly, bypassing
+        ``predict_layers`` (which are future-oriented).
+        Reuses ``projection_layer`` for the channel projection.
+
+        Args:
+            x_enc: ``(B, seq_len, enc_in)``
+
+        Returns:
+            reconstruction: ``(B, seq_len, enc_in)``
+        """
+        B, T, C = x_enc.shape
+
+        # 1. Multi-scale downsampling (marks ignored — see note below)
+        # We pass a dummy zero mark; _multiscale_inputs uses ::stride indexing for
+        # marks but avg_pool1d (floor division) for x, so their T_i can differ for
+        # seq_len values that are not divisible by down_sampling_window^n.
+        # To avoid the shape mismatch we create per-scale zero marks directly.
+        dummy_mark = torch.zeros(B, T, 4, device=x_enc.device, dtype=x_enc.dtype)
+        x_list, _ = self._multiscale_inputs(x_enc, dummy_mark)
+
+        # 2. Per-scale: RevIN norm → channel-independent reshape → embed
+        enc_out_list: list[torch.Tensor] = []
+        for i, x_scale in enumerate(x_list):
+            _, T_i, _ = x_scale.size()
+            x_scale = self.normalize_layers[i](x_scale, "norm")
+            x_flat = (
+                x_scale.permute(0, 2, 1)             # (B, C, T_i)
+                .contiguous()
+                .reshape(B * C, T_i, 1)              # (B*C, T_i, 1)
+            )
+            # Zero marks with correct T_i length (no temporal metadata in SMD)
+            mark_flat = torch.zeros(
+                B * C, T_i, 4, device=x_enc.device, dtype=x_enc.dtype
+            )
+            enc_out_list.append(self.enc_embedding(x_flat, mark_flat))
+
+        # 3. PDM encoder blocks
+        for pdm_block in self.pdm_blocks:
+            enc_out_list = pdm_block(enc_out_list)
+
+        # 4. Reconstruct from finest-scale embedding (bypasses predict_layers)
+        enc_0 = enc_out_list[0]                          # (B*C, T, d_model)
+        dec   = self.projection_layer(enc_0)             # (B*C, T, 1)
+        dec   = (
+            dec.reshape(B, C, T)                         # (B, C, T)
+            .permute(0, 2, 1)                            # (B, T, C)
+            .contiguous()
+        )
+
+        # 5. RevIN denorm using scale-0 statistics
+        dec = self.normalize_layers[0](dec, "denorm")
+        return dec

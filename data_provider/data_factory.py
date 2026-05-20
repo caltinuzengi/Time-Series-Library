@@ -68,12 +68,17 @@ def get_dataloader(args, split: str) -> DataLoader:
     elif args.task == "anomaly_detection":
         # AnomalyDataset has no val split — val reuses train data
         actual_split = "train" if split == "val" else split
+        # step>1 speeds up training by skipping windows; test always uses step=1
+        # for accurate per-timestep reconstruction scores.
+        train_step = getattr(args, "train_step", 1)
+        step = train_step if actual_split == "train" else 1
         dataset = AnomalyDataset(
             root_path=args.root_path,
             data_path=data_file,
             split=actual_split,
             win_size=args.seq_len,
             scale=True,
+            step=step,
         )
     else:
         raise ValueError(

@@ -18,12 +18,14 @@ import argparse
 import json
 import os
 import random
+import time
 from pathlib import Path
 
 import numpy as np
 import torch
 
 from exp.exp_forecasting import ExpForecasting
+from exp.exp_anomaly import ExpAnomaly
 
 
 # ---------------------------------------------------------------------------
@@ -80,6 +82,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--moving_avg",           type=int, default=25,
                    help="Moving-average kernel size for series decomposition (TimeMixer)")
 
+    # --- anomaly detection ---
+    p.add_argument("--anomaly_ratio", type=float, default=1.0,
+                   help="Anomaly percentage (used for threshold selection)")
+    p.add_argument("--train_step", type=int, default=1,
+                   help="Sliding-window stride during training (1=max overlap, "
+                        "e.g. seq_len=non-overlapping).  Test always uses step=1.")
+
     # --- training ---
     p.add_argument("--train_epochs",   type=int,   default=10,   help="Max training epochs")
     p.add_argument("--batch_size",     type=int,   default=32,   help="Batch size")
@@ -98,6 +107,7 @@ def build_parser() -> argparse.ArgumentParser:
     # --- paths ---
     p.add_argument("--checkpoints", default="./checkpoints", help="Checkpoint root dir")
     p.add_argument("--results",     default="./results",     help="Results root dir")
+    p.add_argument("--log_dir",     default="./logs",        help="Training log root dir")
 
     return p
 
@@ -121,20 +131,19 @@ def resolve_device(args) -> torch.device:
 
 
 def build_checkpoint_path(args) -> str:
+    tag = args.pred_len if args.task == "forecasting" else args.seq_len
     return os.path.join(
         args.checkpoints,
-        f"{args.model}_{args.data}_{args.task}_{args.pred_len}",
+        f"{args.model}_{args.data}_{args.task}_{tag}",
     )
 
 
-def save_results(args, metrics: dict) -> None:
+def save_results(args, metrics: dict, ts: str) -> None:
     """Persist metrics + config snapshot to results/."""
-    import time as _time
-    tag = f"{args.model}_{args.data}_{args.task}_{args.pred_len}"
-    ts = _time.strftime("%Y%m%d_%H%M%S")
+    tag = args.pred_len if args.task == "forecasting" else args.seq_len
     out_dir = Path(args.results)
     out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / f"{tag}_{ts}.json"
+    out_path = out_dir / f"{args.model}_{args.data}_{args.task}_{tag}_{ts}.json"
 
     payload = {
         "metrics": metrics,
@@ -142,7 +151,24 @@ def save_results(args, metrics: dict) -> None:
     }
     with open(out_path, "w") as f:
         json.dump(payload, f, indent=2, default=str)
-    print(f"Results saved → {out_path}")
+    print(f"Results saved \u2192 {out_path}")
+
+
+def save_epoch_log(args, epoch_logs: list, metrics: dict, ts: str) -> None:
+    """Persist per-epoch training history + final metrics to logs/."""
+    tag = args.pred_len if args.task == "forecasting" else args.seq_len
+    out_dir = Path(args.log_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = out_dir / f"{args.model}_{args.data}_{args.task}_{tag}_{ts}.json"
+
+    payload = {
+        "config":      vars(args),
+        "epoch_logs":  epoch_logs,
+        "metrics":     metrics,
+    }
+    with open(out_path, "w") as f:
+        json.dump(payload, f, indent=2, default=str)
+    print(f"Epoch log saved \u2192 {out_path}")
 
 
 # ---------------------------------------------------------------------------
@@ -157,6 +183,8 @@ def main() -> None:
     args.device = resolve_device(args)
     args.checkpoint_path = build_checkpoint_path(args)
 
+    ts = time.strftime("%Y%m%d_%H%M%S")   # shared timestamp for results + log files
+
     print(f"Device : {args.device}")
     print(f"Model  : {args.model}")
     print(f"Data   : {args.data}  seq={args.seq_len}  pred={args.pred_len}")
@@ -165,9 +193,16 @@ def main() -> None:
         exp = ExpForecasting(args)
         exp.train()
         metrics = exp.test()
-        save_results(args, metrics)
+        save_results(args, metrics, ts)
+        save_epoch_log(args, exp.epoch_logs, metrics, ts)
+    elif args.task == "anomaly_detection":
+        exp = ExpAnomaly(args)
+        exp.train()
+        metrics = exp.test()
+        save_results(args, metrics, ts)
+        save_epoch_log(args, exp.epoch_logs, metrics, ts)
     else:
-        raise NotImplementedError(f"Task {args.task!r} not yet implemented. (Faz 2)")
+        raise NotImplementedError(f"Task {args.task!r} is not implemented.")
 
 
 if __name__ == "__main__":

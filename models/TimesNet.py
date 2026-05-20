@@ -132,3 +132,38 @@ class TimesNet(nn.Module):
         # 7. RevIN denormalise
         out = self.revin(out, "denorm")                        # (B, H, c_out)
         return out
+
+    # ------------------------------------------------------------------
+
+    def anomaly_detection(self, x_enc: torch.Tensor) -> torch.Tensor:
+        """Reconstruct the input sequence for anomaly detection.
+
+        Skips ``predict_linear`` so TimesBlocks operate directly on
+        ``seq_len``.  The existing ``projection`` head maps back to input
+        space (``c_out == enc_in`` for reconstruction).
+
+        Args:
+            x_enc: ``(B, seq_len, enc_in)``
+
+        Returns:
+            reconstruction: ``(B, seq_len, c_out)``
+        """
+        B, T, _ = x_enc.shape
+
+        # 1. RevIN normalise
+        x = self.revin(x_enc, "norm")                         # (B, T, C)
+
+        # 2. Embed — zero time marks (no temporal metadata in SMD)
+        x_mark = torch.zeros(B, T, 4, device=x_enc.device, dtype=x_enc.dtype)
+        enc = self.embedding(x, x_mark)                       # (B, T, d_model)
+
+        # 3. TimesBlocks on seq_len (predict_linear skipped)
+        for block, norm in zip(self.blocks, self.norms):
+            enc = norm(block(enc))                            # (B, T, d_model)
+
+        # 4. Project to output space
+        out = self.projection(enc)                            # (B, T, c_out)
+
+        # 5. RevIN denormalise
+        out = self.revin(out, "denorm")                       # (B, T, c_out)
+        return out

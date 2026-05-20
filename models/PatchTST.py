@@ -157,9 +157,16 @@ class PatchTST(nn.Module):
         )
         self.encoder_norm = nn.LayerNorm(configs.d_model)
 
+        self.seq_len     = configs.seq_len
+        self.num_patches = num_patches
+        self._d_model    = configs.d_model
+
         # --- Prediction head ---
         # Flatten all patch tokens, then project to pred_len
         self.head = nn.Linear(num_patches * configs.d_model, configs.pred_len)
+
+        # Reconstruction head for anomaly detection (same backbone, seq_len output)
+        self.recon_head = nn.Linear(num_patches * configs.d_model, configs.seq_len)
 
     # ------------------------------------------------------------------
 
@@ -207,4 +214,45 @@ class PatchTST(nn.Module):
         # 5. RevIN denormalize
         x = self.revin(x, "denorm")
 
+        return x
+
+    # ------------------------------------------------------------------
+
+    def anomaly_detection(self, x_enc: torch.Tensor) -> torch.Tensor:
+        """Reconstruct the input sequence for anomaly detection.
+
+        Same encoder backbone as :meth:`forward`, but uses ``recon_head``
+        to project to ``seq_len`` instead of ``pred_len``.
+
+        Args:
+            x_enc: ``(B, seq_len, enc_in)``
+
+        Returns:
+            reconstruction: ``(B, seq_len, enc_in)``
+        """
+        B, T, C = x_enc.shape
+
+        # 1. RevIN normalize
+        x = self.revin(x_enc, "norm")            # (B, T, C)
+
+        # 2. Patch embedding — channel-independent
+        x = self.patch_embed(x)                  # (B*C, N, d_model)
+
+        # 3. Transformer encoder
+        for layer in self.encoder:
+            x = layer(x)                         # (B*C, N, d_model)
+        x = self.encoder_norm(x)
+
+        # 4. Flatten + reconstruct
+        x = x.flatten(start_dim=1)               # (B*C, N*d_model)
+        x = self.recon_head(x)                   # (B*C, seq_len)
+
+        x = (
+            x.reshape(B, C, T)                   # (B, C, T)
+            .permute(0, 2, 1)                    # (B, T, C)
+            .contiguous()
+        )
+
+        # 5. RevIN denormalize
+        x = self.revin(x, "denorm")
         return x
