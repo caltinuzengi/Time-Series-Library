@@ -21,6 +21,7 @@ import torch
 import torch.nn as nn
 from loguru import logger
 from tqdm.auto import tqdm
+from tqdm.auto import tqdm
 
 from data_provider.data_factory import get_dataloader
 from exp.exp_base import ExpBase
@@ -124,7 +125,7 @@ class ExpAnomaly(ExpBase):
     # ------------------------------------------------------------------
 
     def _compute_raw_scores(
-        self, loader
+        self, loader, desc: str = "scoring"
     ) -> tuple[np.ndarray, np.ndarray | None]:
         """Compute per-timestep reconstruction MSE (mean over channels).
 
@@ -132,6 +133,7 @@ class ExpAnomaly(ExpBase):
             loader: DataLoader whose batches are either:
                 - plain ``Tensor (B, T, C)``  (train split), or
                 - ``(Tensor(B, T, C), Tensor(B, T))`` tuple (test split).
+            desc: tqdm progress bar label.
 
         Returns:
             ``(scores, labels)`` both flattened to 1-D.
@@ -143,7 +145,8 @@ class ExpAnomaly(ExpBase):
         all_labels: list[np.ndarray] = []
 
         with torch.no_grad():
-            for batch in loader:
+            for batch in tqdm(loader, desc=desc, leave=False,
+                              unit="batch", dynamic_ncols=True):
                 if isinstance(batch, (list, tuple)):
                     x, labels = batch
                     all_labels.append(labels.numpy())
@@ -185,11 +188,11 @@ class ExpAnomaly(ExpBase):
 
         # Step 1: reconstruction scores on normal (train) data
         logger.info("Computing train scores …")
-        train_scores, _ = self._compute_raw_scores(train_loader)
+        train_scores, _ = self._compute_raw_scores(train_loader, desc="train-score")
 
         # Step 2: reconstruction scores + ground-truth labels on test data
         logger.info("Computing test scores …")
-        test_scores, test_labels = self._compute_raw_scores(test_loader)
+        test_scores, test_labels = self._compute_raw_scores(test_loader, desc="test-score")
 
         if test_labels is None:
             raise RuntimeError(
