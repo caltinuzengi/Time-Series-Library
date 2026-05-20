@@ -21,8 +21,8 @@ for DATA in ETTh1 ETTh2 ETTm1 ETTm2; do
       --patch_len      16 \
       --stride         8 \
       --dropout        0.2 \
-      --train_epochs   100 \
-      --batch_size     64 \
+      --train_epochs   10 \
+      --batch_size     32 \
       --learning_rate  1e-4 \
       --patience       10 \
       --num_workers    2 \

@@ -22,7 +22,7 @@ for DATA in ETTh1 ETTh2 ETTm1 ETTm2; do
       --small_kernel   5 \
       --ffn_ratio      4 \
       --dropout        0.1 \
-      --train_epochs   30 \
+      --train_epochs   10 \
       --batch_size     32 \
       --learning_rate  1e-3 \
       --patience       5 \

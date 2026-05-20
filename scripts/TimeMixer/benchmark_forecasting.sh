@@ -21,8 +21,8 @@ for DATA in ETTh1 ETTh2 ETTm1 ETTm2; do
       --down_sampling_window 2 \
       --moving_avg           25 \
       --dropout              0.1 \
-      --train_epochs         20 \
-      --batch_size           16 \
+      --train_epochs         10 \
+      --batch_size           32 \
       --learning_rate        0.01 \
       --patience             5 \
       --num_workers          2 \

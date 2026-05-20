@@ -243,13 +243,13 @@ class PastDecomposableMixing(nn.Module):
         # Top-down trend mixing → each (B, T_i, d_model)
         out_trend_list  = self.trend_mixing(trend_list)
 
-        # Residual + cross-layer projection
+        # Residual + cross-layer projection + LayerNorm
         out_list: list[torch.Tensor] = []
         for ori, out_season, out_trend, length in zip(
             x_list, out_season_list, out_trend_list, length_list
         ):
-            mixed = out_season + out_trend                  # (B, T_i, d_model)
-            out   = ori + self.out_cross_layer(mixed)       # (B, T_i, d_model)
+            mixed = out_season + out_trend                              # (B, T_i, d_model)
+            out   = self.layer_norm(ori + self.out_cross_layer(mixed)) # (B, T_i, d_model)
             out_list.append(out[:, :length, :])             # safety truncation
 
         return out_list

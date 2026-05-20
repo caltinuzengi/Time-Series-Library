@@ -256,17 +256,15 @@ class ModernTCNBlock(nn.Module):
 
         # ── ConvFFN-1: per-variate feature mixing ─────────────────────
         x = x.reshape(B, M * D, N)
-        x = self.ffn1_drop1(self.ffn1_pw1(x))   # (B, M*d_ff, N)
-        x = self.ffn1_act(x)
-        x = self.ffn1_drop2(self.ffn1_pw2(x))   # (B, M*D, N)
+        x = self.ffn1_drop1(self.ffn1_act(self.ffn1_pw1(x)))   # pw → act → drop  (B, M*d_ff, N)
+        x = self.ffn1_drop2(self.ffn1_pw2(x))                  # pw → drop         (B, M*D, N)
         x = x.reshape(B, M, D, N)
 
         # ── ConvFFN-2: cross-variate mixing (per feature dim) ─────────
         x = x.permute(0, 2, 1, 3)               # (B, D, M, N)
         x = x.reshape(B, D * M, N)
-        x = self.ffn2_drop1(self.ffn2_pw1(x))   # (B, D*d_ff, N)
-        x = self.ffn2_act(x)
-        x = self.ffn2_drop2(self.ffn2_pw2(x))   # (B, D*M, N)
+        x = self.ffn2_drop1(self.ffn2_act(self.ffn2_pw1(x)))   # pw → act → drop  (B, D*d_ff, N)
+        x = self.ffn2_drop2(self.ffn2_pw2(x))                  # pw → drop         (B, D*M, N)
         x = x.reshape(B, D, M, N)
         x = x.permute(0, 2, 1, 3)               # (B, M, D, N)
 
